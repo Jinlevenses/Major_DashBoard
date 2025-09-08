@@ -69,7 +69,7 @@ def load_data(path: str) -> pd.DataFrame:
 # ==============================
 # 2) 데이터 로드
 # ==============================
-RAW_DF, LONG_DF = load_data('data.csv')
+RAW_DF, LONG_DF = load_data('learnProcess.csv')
 
 # ==============================
 # 3) 사이드바 필터
@@ -285,3 +285,4 @@ if len(l) > 0:
 # ==============================
 if df.empty:
     st.warning('선택된 조건에 해당하는 과목이 없습니다. 필터를 완화해 보세요.')
+
