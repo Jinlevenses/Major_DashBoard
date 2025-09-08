@@ -71,8 +71,10 @@ def styled_table(df_sub: pd.DataFrame, highlight_cols=None):
     return styler
 
 
-def build_matrix_html(src_df: pd.DataFrame) -> str:
-    """분야 - 학년&학기 """
+def build_matrix_html(src_df: pd.DataFrame, field_rows=None) -> str:
+    """분야 - 학년&학기 행렬 (field_rows 지정 시 해당 분야만 표시)."""
+    if field_rows is None or len(field_rows) == 0:
+        field_rows = fields
     if src_df.empty:
         return '<p>데이터 없음</p>'
     # 사용되는 (학년,학기) 조합 추출 (정렬)
@@ -91,7 +93,7 @@ def build_matrix_html(src_df: pd.DataFrame) -> str:
 
     # 셀 구성: 해당 필드 컬럼이 ◎/○ 인 과목만 포함
     table_rows = []
-    for field in fields:
+    for field in field_rows:
         row_cells = []
         for (y, s) in year_sem:
             sub = src_df[(src_df['학년'] == y) & (src_df['학기'] == s) & (src_df[field].isin(STAGE_VALUES))]
@@ -146,9 +148,8 @@ def build_matrix_html(src_df: pd.DataFrame) -> str:
     return ''.join(html)
 
 
-############################################
-# 3. 필터링 로직
-############################################
+#3. 필터링 로직
+
 
 # 학년 / 학기 선택이 없으면 전체 허용
 if selected_years:
@@ -167,9 +168,9 @@ filtered_df = df[year_mask & semester_mask]
 if show_key_only:
     filtered_df = filtered_df[filtered_df['주요과목']]
 
-#############################
+
 # 분야 필터 (OR) & 공란 제거 조건
-#############################
+
 if selected_fields:
     # 선택된 모든 과목 중에서 ANY 선택 분야에 단계 기호(◎/○) 있는 행만 유지
     mask = pd.Series(False, index=filtered_df.index)
@@ -180,10 +181,10 @@ if selected_fields:
 
 
 # 4. 대시보드 메인 화면 구성
-st.title('📖 전남대학교 산업공학과 전공과정 대시보드')
+st.title('📖 교과과정 대시보드')
 st.write('좌측 사이드바의 필터를 사용하여 원하는 과목을 탐색할 수 있습니다.')
 st.caption('◎ = 전공 심화 / ○ = 전공 핵심')
-st.caption('빨간 글씨 = 전공 심화 / 파란 글씨 = 전공 핵심')
+st.caption('빨간 글씨 - 전공 심화, 파란 글씨 - 전공 핵심')
 
 
 # 기본 표 (필드 미선택 시 전체 개요 제공)
@@ -195,7 +196,8 @@ if view_mode == '과목 별' and not selected_fields:
 # 행렬 보기 (필터링된 데이터 전체 사용)
 if view_mode == '분야 - 학년/학기':
     st.markdown('#### 📌 분야 x 학년/학기 기준')
-    st.markdown(build_matrix_html(filtered_df), unsafe_allow_html=True)
+    # 선택한 분야가 있으면 그 분야만 행으로 표시, 없으면 전체
+    st.markdown(build_matrix_html(filtered_df, selected_fields if selected_fields else fields), unsafe_allow_html=True)
 
 # 분야 선택 시 단계(○/◎)별 그룹 표시
 stage_order = STAGE_VALUES  # ['◎','○'] 심화 -> 핵심
@@ -259,5 +261,3 @@ if not target_df_for_chart.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.warning('선택된 조건에 해당하는 과목이 없습니다.')
-
-
