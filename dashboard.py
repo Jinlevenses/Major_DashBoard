@@ -71,27 +71,72 @@ def load_data(path: str) -> pd.DataFrame:
 # ==============================
 RAW_DF, LONG_DF = load_data('learnProcess.csv')
 
-# ==============================
-# 3) 사이드바 필터
-# ==============================
 st.sidebar.header('🔍 필터 설정')
 
 years = sorted(RAW_DF['학년'].unique().tolist())
 sems  = sorted(RAW_DF['학기'].unique().tolist())
-selected_years = st.sidebar.multiselect('학년 선택 (미선택 시 전체)', years, default=[])
-selected_sems  = st.sidebar.multiselect('학기 선택 (미선택 시 전체)', sems, default=[])
+FIELDS = ['시스템 최적화', '생산 및 물류', '품질 및 응용 통계', 'IT융합', '인간 및 시스템', '시스템 경영']
 
-selected_fields = st.sidebar.multiselect('분야 선택 (미선택 시 전체)', FIELDS, default=[])
-show_key_only = st.sidebar.checkbox('주요 과목만 보기', value=False)
+DEFAULTS = {
+    "selected_years": [],
+    "selected_sems": [],
+    "selected_fields": [],
+    "show_key_only": False,
+    "view_mode": "분야 - 학년/학기",
+}
 
-view_mode = st.sidebar.radio('표 형태 선택', ['과목 별', '분야 - 학년/학기'], index=1)
+# 1) 위젯을 만들기 전에 세션 상태 기본값을 보장
+for k, v in DEFAULTS.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-reset = st.sidebar.button('필터 초기화')
-if reset:
-    selected_years[:] = []
-    selected_sems[:] = []
-    selected_fields[:] = []
-    show_key_only = False
+# 2) 초기화 콜백(위젯 생성 후 값을 바꿔도 안전함: 콜백 → rerun)
+def reset_filters():
+    for k, v in DEFAULTS.items():
+        st.session_state[k] = v
+    # 콜백 종료 후 Streamlit이 자동 rerun 해줍니다. (st.rerun() 불필요)
+
+# 3) 위젯 생성 (key만 주면 Streamlit이 session_state 값을 자동으로 사용)
+st.sidebar.multiselect(
+    '학년 선택 (미선택 시 전체)', years,
+    default=st.session_state["selected_years"],
+    key="selected_years"
+)
+
+st.sidebar.multiselect(
+    '학기 선택 (미선택 시 전체)', sems,
+    default=st.session_state["selected_sems"],
+    key="selected_sems"
+)
+
+st.sidebar.multiselect(
+    '분야 선택 (미선택 시 전체)', FIELDS,
+    default=st.session_state["selected_fields"],
+    key="selected_fields"
+)
+
+st.sidebar.checkbox(
+    '주요 과목만 보기',
+    value=st.session_state["show_key_only"],
+    key="show_key_only"
+)
+
+# radio는 value 또는 index 중 하나만 써야 충돌이 없습니다. value로 고정 추천.
+st.sidebar.radio(
+    '표 형태 선택',
+    options=['과목 별', '분야 - 학년/학기'],
+    key="view_mode"
+)
+
+# 4) 필터 초기화 버튼: on_click 콜백 사용 (직접 session_state 수정 X)
+st.sidebar.button('필터 초기화', type='primary', on_click=reset_filters)
+
+# 5) 이후 로직에서 사용할 현재 값
+selected_years   = st.session_state["selected_years"]
+selected_sems    = st.session_state["selected_sems"]
+selected_fields  = st.session_state["selected_fields"]
+show_key_only    = st.session_state["show_key_only"]
+view_mode        = st.session_state["view_mode"]
 
 # ==============================
 # 4) 필터 적용
@@ -285,4 +330,5 @@ if len(l) > 0:
 # ==============================
 if df.empty:
     st.warning('선택된 조건에 해당하는 과목이 없습니다. 필터를 완화해 보세요.')
+
 
