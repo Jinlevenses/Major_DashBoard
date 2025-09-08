@@ -1,53 +1,149 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
-# 0. 페이지 설정
+# ==============================
+# 0) 페이지 설정
+# ==============================
 st.set_page_config(layout="wide", page_title="교과과정 대시보드")
 
-# 1. 데이터 로드 및 전처리
-# 이미지의 데이터를 수동으로 DataFrame으로 변환했습니다.
+# ==============================
+# 1) 상수/유틸
+# ==============================
+FIELDS = ['시스템 최적화', '생산 및 물류', '품질 및 응용 통계', 'IT융합', '인간 및 시스템', '시스템 경영']
+LEVEL_SYMBOLS = ['◎', '○']     # 심화, 핵심
+LEVEL_MAP = {'◎': '심화', '○': '핵심'}
+SEM_ORDER = [(y, s) for y in [1,2,3,4] for s in [1,2]]  # 1-1,1-2,...,4-2 순서
 
+KEY_SUBJECTS = [
+   '산업공학입문', '프로그래밍기초', '확률통계', '경영과학1', 
+    '생산관리1', '산업공학종합설계(캡스톤디자인)'
+]
 
-# 주요 과목 (노란색으로 강조된 과목) 리스트
-key_subjects = ['산업공학특강', '산업시스템공학', '제조공학', '확률통계', '경영과학2', '실험계획법',
-                '산업공학SW활용', '시스템공학특강', '산업공학종합설계(캡스톤디자인)', '복합시스템공학', '산업시스템사례연구']
-df = pd.read_csv('learnProcess.csv')
-df['주요과목'] = df['교과목 명'].isin(key_subjects)
+def _normalize_series(s: pd.Series) -> pd.Series:
+    return s.astype(str).str.replace('\n',' ').str.strip().replace({'#N/A':'', 'nan':''})
 
-# 2. 사이드바 필터 설정
+@st.cache_data
+def load_data(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    # 표준화
+    df.columns = [c.replace('\n',' ').strip() for c in df.columns]
+    for c in ['교과목 명', '학년', '학기']:
+        df[c] = _normalize_series(df[c])
+    for f in FIELDS:
+        if f in df.columns:
+            df[f] = _normalize_series(df[f])
+        else:
+            df[f] = ''  # 누락 방어
+
+    # 숫자형 변환 (학년/학기)
+    df['학년'] = pd.to_numeric(df['학년'], errors='coerce')
+    df['학기'] = pd.to_numeric(df['학기'], errors='coerce')
+    df = df.dropna(subset=['교과목 명', '학년', '학기'])
+    df['학년'] = df['학년'].astype(int)
+    df['학기'] = df['학기'].astype(int)
+
+    # 주요과목 플래그
+    df['주요과목'] = df['교과목 명'].isin(KEY_SUBJECTS)
+
+    # long 형 변환 (과목×분야×심화/핵심)
+    wide = df[['교과목 명','학년','학기','주요과목'] + FIELDS].copy()
+    long = wide.melt(
+        id_vars=['교과목 명','학년','학기','주요과목'],
+        value_vars=FIELDS,
+        var_name='분야',
+        value_name='기호'
+    )
+    long = long[long['기호'].isin(LEVEL_SYMBOLS)]  # ◎/○만
+    long['전문성'] = long['기호'].map(LEVEL_MAP)
+    long['학기라벨'] = long['학년'].astype(str) + '-' + long['학기'].astype(str)
+
+    # 정렬키
+    sem_key = {f"{y}-{s}": i for i, (y,s) in enumerate(SEM_ORDER)}
+    long['sem_order'] = long['학기라벨'].map(sem_key).fillna(9999).astype(int)
+    long['field_order'] = long['분야'].apply(lambda x: FIELDS.index(x) if x in FIELDS else 999)
+
+    return df, long
+
+# ==============================
+# 2) 데이터 로드
+# ==============================
+RAW_DF, LONG_DF = load_data('data.csv')
+
+# ==============================
+# 3) 사이드바 필터
+# ==============================
 st.sidebar.header('🔍 필터 설정')
 
-df = df.fillna('')  # 안전하게 공란 처리
+years = sorted(RAW_DF['학년'].unique().tolist())
+sems  = sorted(RAW_DF['학기'].unique().tolist())
+selected_years = st.sidebar.multiselect('학년 선택 (미선택 시 전체)', years, default=[])
+selected_sems  = st.sidebar.multiselect('학기 선택 (미선택 시 전체)', sems, default=[])
 
-# 학년 필터 (선택 안 하면 전체 적용)
-years = sorted(df['학년'].unique())
-selected_years = st.sidebar.multiselect('학년 선택 \n (미선택 시 전체)', years, default=[])
+selected_fields = st.sidebar.multiselect('분야 선택 (미선택 시 전체)', FIELDS, default=[])
+show_key_only = st.sidebar.checkbox('주요 과목만 보기', value=False)
 
-# 학기 필터 (선택 안 하면 전체 적용)
-semesters = sorted(df['학기'].unique())
-selected_semesters = st.sidebar.multiselect('학기 선택 \n (미선택 시 전체)', semesters, default=[])
-
-# 분야 필터
-fields = ['시스템 최적화', '생산 및 물류', '품질 및 응용 통계', 'IT융합', '인간 및 시스템', '시스템 경영']
-
-# 단계 기호 상수화
-STAGE_VALUES = ['◎', '○']  # 전공 심화, 전공 핵심 (순서 중요: 심화 우선)
-
-# 필드 컬럼 공백 표준화 (예방적)
-for _f in fields:
-    if _f in df.columns:
-        df[_f] = df[_f].astype(str).str.strip()
-selected_fields = st.sidebar.multiselect('분야 선택 \n (미선택 시 전체 분포만)', fields, default=[])
-
-# 주요과목 필터
-show_key_only = st.sidebar.checkbox('주요 과목만 보기')
-
-# 표 형태 선택
 view_mode = st.sidebar.radio('표 형태 선택', ['과목 별', '분야 - 학년/학기'], index=1)
 
+reset = st.sidebar.button('필터 초기화')
+if reset:
+    selected_years[:] = []
+    selected_sems[:] = []
+    selected_fields[:] = []
+    show_key_only = False
 
-# ---------- 표 스타일링 헬퍼 ----------
+# ==============================
+# 4) 필터 적용
+# ==============================
+df = RAW_DF.copy()
+if selected_years:
+    df = df[df['학년'].isin(selected_years)]
+if selected_sems:
+    df = df[df['학기'].isin(selected_sems)]
+if show_key_only:
+    df = df[df['주요과목']]
+
+# 분야 필터(OR) → wide 기준으로 해당 분야에 ◎/○가 하나라도 있는 과목만
+if selected_fields:
+    mask = np.zeros(len(df), dtype=bool)
+    for f in selected_fields:
+        if f in df.columns:
+            mask |= df[f].isin(LEVEL_SYMBOLS).values
+    df = df[mask]
+
+# LONG_DF에도 동일 조건 적용
+l = LONG_DF.copy()
+if selected_years:
+    l = l[l['학년'].isin(selected_years)]
+if selected_sems:
+    l = l[l['학기'].isin(selected_sems)]
+if show_key_only:
+    l = l[l['주요과목']]
+if selected_fields:
+    l = l[l['분야'].isin(selected_fields)]
+
+# ==============================
+# 5) 헤더 / KPI
+# ==============================
+st.title('📖 교과과정 대시보드')
+st.write('좌측 사이드바의 필터를 사용하여 원하는 과목을 탐색할 수 있습니다.')
+st.caption('◎ = 전공 심화 / ○ = 전공 핵심  ·  빨간 글씨 = 심화, 파란 글씨 = 핵심')
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric('총 과목 수(필터 후)', f"{df['교과목 명'].nunique():,}")
+c2.metric('분야 수(필터 후)', f"{l['분야'].nunique():,}")
+if len(l) > 0:
+    deep_ratio = (l['전문성'].eq('심화').mean()) * 100
+    core_ratio = (l['전문성'].eq('핵심').mean()) * 100
+else:
+    deep_ratio, core_ratio = 0, 0
+c3.metric('심화 비중', f"{deep_ratio:.0f}%")
+c4.metric('핵심 비중', f"{core_ratio:.0f}%")
+
+# ==============================
+# 6) 표/행렬
+# ==============================
 def highlight_stage(val: str):
     if val == '◎':  # 전공 심화
         return 'background-color:#ffe3ba; font-weight:bold;'
@@ -55,48 +151,43 @@ def highlight_stage(val: str):
         return 'background-color:#d9ecff;'
     return ''
 
-
 def styled_table(df_sub: pd.DataFrame, highlight_cols=None):
     if highlight_cols is None:
-        highlight_cols = fields
+        highlight_cols = FIELDS
     highlight_target = [c for c in highlight_cols if c in df_sub.columns]
     styler = df_sub.style
     if highlight_target:
         styler = styler.applymap(highlight_stage, subset=highlight_target)
-    # 가운데 정렬 (교과목 명 제외)
     center_cols = [c for c in df_sub.columns if c != '교과목 명']
     if center_cols:
         styler = styler.set_properties(subset=center_cols, **{'text-align': 'center'})
     styler = styler.set_properties(subset=['교과목 명'], **{'text-align': 'left'})
     return styler
 
-
 def build_matrix_html(src_df: pd.DataFrame, field_rows=None) -> str:
     """분야 - 학년&학기 행렬 (field_rows 지정 시 해당 분야만 표시)."""
-    if field_rows is None or len(field_rows) == 0:
-        field_rows = fields
+    fields = field_rows if field_rows else FIELDS
     if src_df.empty:
         return '<p>데이터 없음</p>'
-    # 사용되는 (학년,학기) 조합 추출 (정렬)
-    year_sem = sorted(src_df[['학년', '학기']].drop_duplicates().itertuples(index=False, name=None))
-    # 헤더 (2줄 구조) 직접 HTML 구성
-    years = sorted({y for y, _ in year_sem})
-    # 학년별 학기 목록
-    year_to_sems = {y: [s for (yy, s) in year_sem if yy == y] for y in years}
 
-    def color_course(row_val: str, course: str) -> str:
-        if row_val == '◎':  # 심화
+    used = sorted(set([(int(y), int(s)) for y, s in src_df[['학년','학기']].itertuples(index=False)]),
+                  key=lambda ys: SEM_ORDER.index(ys) if ys in SEM_ORDER else 999)
+
+    years = sorted({y for y, _ in used})
+    year_to_sems = {y: [s for (yy, s) in used if yy == y] for y in years}
+
+    def color_course(mark: str, course: str) -> str:
+        if mark == '◎':
             return f'<span style="color:#d40000;font-weight:600;">{course}</span>'
-        if row_val == '○':  # 핵심
+        if mark == '○':
             return f'<span style="color:#0041d9;">{course}</span>'
         return f'<span style="color:#000;">{course}</span>'
 
-    # 셀 구성: 해당 필드 컬럼이 ◎/○ 인 과목만 포함
     table_rows = []
-    for field in field_rows:
+    for field in fields:
         row_cells = []
-        for (y, s) in year_sem:
-            sub = src_df[(src_df['학년'] == y) & (src_df['학기'] == s) & (src_df[field].isin(STAGE_VALUES))]
+        for (y, s) in used:
+            sub = src_df[(src_df['학년'] == y) & (src_df['학기'] == s) & (src_df[field].isin(LEVEL_SYMBOLS))]
             if sub.empty:
                 row_cells.append('')
             else:
@@ -104,14 +195,12 @@ def build_matrix_html(src_df: pd.DataFrame, field_rows=None) -> str:
                 row_cells.append('<br>'.join(rendered))
         table_rows.append((field, row_cells))
 
-    # HTML 렌더링
-    # 스타일 (스크롤 및 셀 스타일)
     html = ["""
     <style>
     .matrix-table {border-collapse:collapse; width:100%; font-size:13px; background:#fff;}
     .matrix-table th, .matrix-table td {border:1px solid #ddd; padding:6px 8px; vertical-align:top;}
     .matrix-table th {background:#f1f3f8; text-align:center;}
-    .matrix-table td {min-width:110px;}
+    .matrix-table td {min-width:120px;}
     .matrix-top-header {background:#e2e8f5;font-weight:600;}
     .field-col {background:#fafafa;font-weight:600; position:sticky; left:0;}
     .matrix-wrapper {overflow-x:auto; border:1px solid #ddd;}
@@ -119,24 +208,16 @@ def build_matrix_html(src_df: pd.DataFrame, field_rows=None) -> str:
     <div class="matrix-wrapper">
     <table class="matrix-table">
     """]
-
-    # 첫째 줄: 학년 헤더 (colspan)
-    html.append('<thead>')
-    html.append('<tr>')
+    html.append('<thead><tr>')
     html.append('<th class="matrix-top-header" rowspan="2" style="left:0;">분야</th>')
     for y in years:
         span = len(year_to_sems[y])
         html.append(f'<th class="matrix-top-header" colspan="{span}">{y}학년</th>')
-    html.append('</tr>')
-    # 둘째 줄: 학기
-    html.append('<tr>')
+    html.append('</tr><tr>')
     for y in years:
         for s in year_to_sems[y]:
             html.append(f'<th>{s}학기</th>')
-    html.append('</tr>')
-    html.append('</thead>')
-
-    # 몸체
+    html.append('</tr></thead>')
     html.append('<tbody>')
     for field, cells in table_rows:
         html.append('<tr>')
@@ -147,117 +228,60 @@ def build_matrix_html(src_df: pd.DataFrame, field_rows=None) -> str:
     html.append('</tbody></table></div>')
     return ''.join(html)
 
+# 상단 표/행렬
+st.caption('※ 표 또는 행렬이 길 경우, 가로 스크롤로 보세요.')
+if view_mode == '과목 별':
+    base_cols = ['교과목 명', '학년', '학기'] + FIELDS + ['주요과목']
+    show_df = df[base_cols].sort_values(['학년','학기','교과목 명'])
+    st.dataframe(styled_table(show_df), use_container_width=True, height=420)
 
-#3. 필터링 로직
-
-
-# 학년 / 학기 선택이 없으면 전체 허용
-if selected_years:
-    year_mask = df['학년'].isin(selected_years)
-else:
-    year_mask = pd.Series([True] * len(df))
-
-if selected_semesters:
-    semester_mask = df['학기'].isin(selected_semesters)
-else:
-    semester_mask = pd.Series([True] * len(df))
-
-filtered_df = df[year_mask & semester_mask]
-
-# 주요과목 필터
-if show_key_only:
-    filtered_df = filtered_df[filtered_df['주요과목']]
-
-
-# 분야 필터 (OR) & 공란 제거 조건
-
-if selected_fields:
-    # 선택된 모든 과목 중에서 ANY 선택 분야에 단계 기호(◎/○) 있는 행만 유지
-    mask = pd.Series(False, index=filtered_df.index)
-    for field in selected_fields:
-        if field in filtered_df.columns:
-            mask = mask | (filtered_df[field].isin(STAGE_VALUES))
-    filtered_df = filtered_df[mask]
-
-
-# 4. 대시보드 메인 화면 구성
-st.title('📖 교과과정 대시보드')
-st.write('좌측 사이드바의 필터를 사용하여 원하는 과목을 탐색할 수 있습니다.')
-st.caption('◎ = 전공 심화 / ○ = 전공 핵심')
-st.caption('빨간 글씨 - 전공 심화, 파란 글씨 - 전공 핵심')
-
-
-# 기본 표 (필드 미선택 시 전체 개요 제공)
-if view_mode == '과목 별' and not selected_fields:
-    base_cols = ['교과목 명', '학년', '학기'] + fields + ['주요과목']
-    display_df = filtered_df[base_cols]
-    st.dataframe(styled_table(display_df), use_container_width=True)
-
-# 행렬 보기 (필터링된 데이터 전체 사용)
 if view_mode == '분야 - 학년/학기':
-    st.markdown('#### 📌 분야 x 학년/학기 기준')
-    # 선택한 분야가 있으면 그 분야만 행으로 표시, 없으면 전체
-    st.markdown(build_matrix_html(filtered_df, selected_fields if selected_fields else fields), unsafe_allow_html=True)
+    st.markdown('#### 📌 분야 × 학년/학기')
+    st.markdown(build_matrix_html(df, selected_fields if selected_fields else FIELDS), unsafe_allow_html=True)
 
-# 분야 선택 시 단계(○/◎)별 그룹 표시
-stage_order = STAGE_VALUES  # ['◎','○'] 심화 -> 핵심
-only_fields_selected = selected_fields and (not selected_years) and (not selected_semesters)
-if selected_fields and view_mode == '과목 별':
-    # 1) 분야만 선택된 경우: 학년 / 학기별 그룹핑
-    if only_fields_selected:
-        for field in selected_fields:
-            st.markdown(f"### 🔎 {field} 학년·학기별 과목")
-            field_df = filtered_df[filtered_df[field].isin(STAGE_VALUES)]
-            if field_df.empty:
-                st.info(f"{field} 관련 표시할 과목이 없습니다.")
-                continue
-            field_df = field_df.sort_values(['학년', '학기'])
-            for (year, semester), grp in field_df.groupby(['학년', '학기'], sort=True):
-                st.markdown(f"- **{year}학년 {semester}학기** ({len(grp)}과목)")
-                st.dataframe(styled_table(grp[['교과목 명', '학년', '학기', field, '주요과목']], highlight_cols=[field]), use_container_width=True)
-    # 2) 학년/학기 필터도 함께 선택된 경우: 단계(심화/핵심)별 그룹핑 유지
-    else:
-        for field in selected_fields:
-            st.markdown(f"### 🔎 {field} 단계별 과목")
-            field_df = filtered_df[filtered_df[field].isin(STAGE_VALUES)]
-            if field_df.empty:
-                st.info(f"{field} 관련 표시할 과목이 없습니다.")
-                continue
-            for stage in stage_order:
-                stage_df = field_df[field_df[field] == stage]
-                if stage_df.empty:
-                    continue
-                label = '전공 심화' if stage == '◎' else '전공 핵심'
-                st.markdown(f"- **{label} ({stage})** ({len(stage_df)}과목)")
-                st.dataframe(styled_table(stage_df[['교과목 명', '학년', '학기', field, '주요과목']], highlight_cols=[field]), use_container_width=True)
-
-
-# 5. 시각화
+# ==============================
+# 7) 시각화
+# ==============================
 st.subheader('분야별 과목 분포')
 
-target_df_for_chart = filtered_df.copy()
+# (A) 분야별 과목 수 막대 (현재 필터 결과 기준)
+counts = []
+for f in FIELDS:
+    if f in df.columns:
+        cnt = df[f].isin(LEVEL_SYMBOLS).sum()
+    else:
+        cnt = 0
+    counts.append({'분야': f, '과목 수': int(cnt)})
+bar_df = pd.DataFrame(counts)
+fig = px.bar(
+    bar_df, x='분야', y='과목 수',
+    title='분야별 과목 분포 (현재 필터 적용)',
+    labels={'분야':'과목 분야', '과목 수':'개설 과목 수'},
+    color='분야', text='과목 수'
+)
+fig.update_layout(xaxis_tickangle=-45, legend_title_text='')
+st.plotly_chart(fig, use_container_width=True)
 
-# 아무 필터도 선택하지 않은 경우 (학년/학기/분야 모두 미선택 & 주요과목 체크 X) -> 전체 데이터 분포
-no_filter = (not selected_years) and (not selected_semesters) and (not selected_fields) and (not show_key_only)
-if no_filter:
-    target_df_for_chart = df
+# (B) Heatmap: 학기×분야 과목 수 (LONG_DF 기준)
+if len(l) > 0:
+    heat = (l.groupby(['학기라벨','분야'])['교과목 명']
+              .nunique().reset_index(name='과목 수'))
+    heat['sem_order'] = heat['학기라벨'].map({f"{y}-{s}":i for i,(y,s) in enumerate(SEM_ORDER)}).fillna(9999)
+    heat['field_order'] = heat['분야'].apply(lambda x: FIELDS.index(x) if x in FIELDS else 999)
+    heat = heat.sort_values(['sem_order','field_order'])
 
-if not target_df_for_chart.empty:
-    counts = []
-    for field in fields:
-        count = target_df_for_chart[field].isin(['○', '◎']).sum()
-        counts.append({'분야': field, '과목 수': count})
-    chart_df = pd.DataFrame(counts)
-    fig = px.bar(
-        chart_df,
-        x='분야',
-        y='과목 수',
-        title='분야별 과목 분포 (현재 필터 적용)',
-        labels={'분야': '과목 분야', '과목 수': '개설된 과목 수'},
-        color='분야',
-        text='과목 수'
+    pivot = heat.pivot(index='분야', columns='학기라벨', values='과목 수').fillna(0)
+    fig2 = px.imshow(
+        pivot,
+        color_continuous_scale='Blues',
+        title='Heatmap: 학기 × 분야 (과목 수)',
+        labels=dict(x='학기', y='분야', color='과목 수'),
+        aspect='auto'
     )
-    fig.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning('선택된 조건에 해당하는 과목이 없습니다.')
+    st.plotly_chart(fig2, use_container_width=True)
+
+# ==============================
+# 8) 빈 결과 처리
+# ==============================
+if df.empty:
+    st.warning('선택된 조건에 해당하는 과목이 없습니다. 필터를 완화해 보세요.')
