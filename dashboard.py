@@ -180,7 +180,7 @@ if selected_fields:
 
 
 # 4. 대시보드 메인 화면 구성
-st.title('📖 교과과정 대시보드')
+st.title('📖 전남대학교 산업공학과 전공과정 대시보드')
 st.write('좌측 사이드바의 필터를 사용하여 원하는 과목을 탐색할 수 있습니다.')
 st.caption('◎ = 전공 심화 / ○ = 전공 핵심')
 st.caption('빨간 글씨 = 전공 심화 / 파란 글씨 = 전공 핵심')
@@ -259,4 +259,5 @@ if not target_df_for_chart.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.warning('선택된 조건에 해당하는 과목이 없습니다.')
+
 
