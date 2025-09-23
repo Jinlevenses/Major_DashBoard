@@ -75,8 +75,6 @@ st.sidebar.header('🔍 필터 설정')
 
 years = sorted(RAW_DF['학년'].unique().tolist())
 sems  = sorted(RAW_DF['학기'].unique().tolist())
-FIELDS = ['시스템 최적화', '생산 및 물류', '품질 및 응용 통계', 'IT융합', '인간 및 시스템', '시스템 경영']
-
 DEFAULTS = {
     "selected_years": [],
     "selected_sems": [],
@@ -330,6 +328,7 @@ if len(l) > 0:
 # ==============================
 if df.empty:
     st.warning('선택된 조건에 해당하는 과목이 없습니다. 필터를 완화해 보세요.')
+
 
 
 
